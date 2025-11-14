@@ -1,0 +1,20 @@
+{
+  "type": "module",
+  "dependencies": {
+    "@slflows/sdk": "^0.0.8",
+    "fast-xml-parser": "^4.5.0",
+    "typescript": "^5.8.3"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.7",
+    "@useflows/flowctl": "^0.1.2",
+    "prettier": "^3.6.2",
+    "ts-node": "^10.9.2"
+  },
+  "scripts": {
+    "setup": "./setup.sh",
+    "bundle": "npx flowctl version bundle -e main.ts",
+    "format": "npx prettier --write .",
+    "typecheck": "npx tsc --noEmit"
+  }
+}
