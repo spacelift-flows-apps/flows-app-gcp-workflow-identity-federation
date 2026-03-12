@@ -6,6 +6,7 @@ import {
   AppInput,
   AppLifecycleCallbackOutput,
   AppOnHTTPRequestInput,
+  AppBlock,
 } from "@slflows/sdk/v1";
 
 // Key value store keys
@@ -22,6 +23,29 @@ const REFRESH_BUFFER_SECONDS = 300; // Refresh 5 minutes before expiration
 const DEFAULT_DURATION_SECONDS = 3600; // Default duration (1 hour)
 const KEY_SIZE = 2048; // RSA key size
 const ALGORITHM = "RS256"; // JWT algorithm
+
+const exposeAccessToken: AppBlock = {
+  name: "Expose Access Token",
+  description: "Exposes the app GCP access token as a block signal",
+  category: "Authentication",
+
+  signals: {
+    accessToken: {
+      name: "GCP Access Token",
+      description: "GCP access token copied from the app signal",
+      sensitive: true,
+    },
+  },
+
+  onSync: async (input: { app: { signals?: Record<string, unknown> } }) => {
+    return {
+      newStatus: "ready",
+      signalUpdates: {
+        accessToken: input.app.signals?.accessToken ?? null,
+      },
+    };
+  },
+};
 
 export const app = defineApp({
   name: "GCP Workload Identity Federation",
@@ -244,7 +268,9 @@ export const app = defineApp({
     },
   },
 
-  blocks: {},
+  blocks: {
+    exposeAccessToken,
+  },
 });
 
 // Helper Functions
