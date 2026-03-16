@@ -7,6 +7,7 @@ import {
   AppLifecycleCallbackOutput,
   AppOnHTTPRequestInput,
 } from "@slflows/sdk/v1";
+import { blocks } from "./blocks/index.ts";
 
 // Key value store keys
 const KV_KEYS = {
@@ -244,7 +245,7 @@ export const app = defineApp({
     },
   },
 
-  blocks: {},
+  blocks,
 });
 
 // Helper Functions
