@@ -102,6 +102,13 @@ export const app = defineApp({
       type: "string",
       required: false,
     },
+    impersonateUser: {
+      name: "Impersonate User (Domain-Wide Delegation)",
+      description:
+        "Email of the Google Workspace user to impersonate via domain-wide delegation (e.g., admin@yourdomain.com). Required for Google Workspace Admin SDK APIs. The service account must have domain-wide delegation enabled in Google Workspace Admin console.",
+      type: "string",
+      required: false,
+    },
     scopes: {
       name: "OAuth Scopes",
       description:
@@ -379,6 +386,19 @@ async function generateCredentials(config: any, appUrl: string) {
     // Parse expiration time
     const expiresAt = new Date(impersonateResult.expireTime).getTime();
 
+    let finalAccessToken = impersonateResult.accessToken;
+
+    // Domain-wide delegation: if impersonateUser is set, sign a JWT with sub claim
+    // and exchange it for a delegated access token
+    if (config.impersonateUser) {
+      finalAccessToken = await generateDelegatedToken(
+        config.serviceAccountEmail,
+        impersonateResult.accessToken,
+        config.impersonateUser,
+        config.scopes || ["https://www.googleapis.com/auth/cloud-platform"],
+      );
+    }
+
     // Store credentials and config checksum
     const configChecksum = await generateChecksum(config);
     await kv.app.setMany([
@@ -387,7 +407,7 @@ async function generateCredentials(config: any, appUrl: string) {
     ]);
 
     return {
-      accessToken: impersonateResult.accessToken,
+      accessToken: finalAccessToken,
       expiresAt,
     };
   } catch (error) {
@@ -397,6 +417,66 @@ async function generateCredentials(config: any, appUrl: string) {
     );
     throw error;
   }
+}
+
+async function generateDelegatedToken(
+  serviceAccountEmail: string,
+  serviceAccountAccessToken: string,
+  impersonateUser: string,
+  scopes: string[],
+): Promise<string> {
+  // Build a JWT payload for domain-wide delegation with a sub claim
+  const now = Math.floor(Date.now() / 1000);
+  const jwtPayload = {
+    iss: serviceAccountEmail,
+    sub: impersonateUser,
+    scope: scopes.join(" "),
+    aud: "https://oauth2.googleapis.com/token",
+    iat: now,
+    exp: now + 3600,
+  };
+
+  // Use IAM Credentials signJwt API to sign the JWT with the service account key
+  const signJwtResponse = await fetch(
+    `https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${serviceAccountEmail}:signJwt`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${serviceAccountAccessToken}`,
+      },
+      body: JSON.stringify({ payload: JSON.stringify(jwtPayload) }),
+    },
+  );
+
+  if (!signJwtResponse.ok) {
+    const errorText = await signJwtResponse.text();
+    throw new Error(
+      `signJwt failed for domain-wide delegation: ${signJwtResponse.status} ${errorText}`,
+    );
+  }
+
+  const { signedJwt } = await signJwtResponse.json();
+
+  // Exchange the signed JWT for a delegated OAuth2 access token
+  const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+      assertion: signedJwt,
+    }),
+  });
+
+  if (!tokenResponse.ok) {
+    const errorText = await tokenResponse.text();
+    throw new Error(
+      `OAuth2 token exchange for domain-wide delegation failed: ${tokenResponse.status} ${errorText}`,
+    );
+  }
+
+  const tokenResult = await tokenResponse.json();
+  return tokenResult.access_token;
 }
 
 async function createOidcToken(appUrl: string): Promise<string> {
