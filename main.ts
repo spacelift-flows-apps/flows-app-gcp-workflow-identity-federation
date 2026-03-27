@@ -70,14 +70,40 @@ export const app = defineApp({
      - Principal: <copyable>\`principalSet://iam.googleapis.com/projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/POOL_ID/attribute.aud/{appEndpointUrl}\`</copyable>
      - Role: "Workload Identity User" (roles/iam.workloadIdentityUser)
 
-5. **Complete the installation configuration**:
+5. **(Optional) Configure Domain-Wide Delegation**:
+
+   Skip this step if you don't need to impersonate Google Workspace users (e.g., Admin SDK, Calendar, Gmail APIs).
+
+   **5a. Grant Service Account Token Creator role**:
+   - On the service account's IAM page, grant the principal the "Service Account Token Creator" role (roles/iam.serviceAccounts.signJwt)
+   - Note: No basic role (including Owner) includes 'iam.serviceAccounts.signJwt' — this role must be granted explicitly
+
+   **5b. Enable delegation on the service account**:
+   - Go to GCP Console → IAM & Admin → Service Accounts
+   - Select your service account → Edit
+   - Enable "Google Workspace Domain-wide Delegation"
+   - Copy the **numeric Client ID** (not the service account email)
+
+   **5c. Authorize the client in Google Workspace Admin Console**:
+   - Go to [admin.google.com](https://admin.google.com) → Security → Access and data control → API Controls → Domain-wide Delegation → Manage Domain Wide Delegation
+   - Click "Add new" and fill in:
+     - **Client ID**: the numeric Client ID from step 5b
+     - **OAuth Scopes**: comma-separated list of required scopes (no spaces, no brackets)
+
+   **Common pitfalls**:
+   - **Wrong Client ID**: use the numeric Client ID from the domain-wide delegation section, not the SA's unique ID or email
+   - **Scope mismatch**: scopes in the Admin Console must exactly match those requested — even a trailing slash will cause an \`unauthorized_client\` error
+   - **Propagation delay**: Admin Console changes can take 15–60 minutes to propagate
+   - **Impersonated user**: must be an actual Google Workspace user in the domain, not an external account
+
+6. **Complete the installation configuration**:
    - Copy the service account email
    - Copy the full Workload Identity Provider resource name (format: projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/POOL_ID/providers/PROVIDER_ID)
    - Return to this installation and paste both values into the configuration
    - Save the configuration - the installation should now succeed and start providing tokens
    - Note that **it takes a few moments for GCP permissions to propagate**, so if the status shows "failed" initially, wait a bit and try syncing again
 
-6. **Use the tokens**:
+7. **Use the tokens**:
    - The installation exposes GCP access tokens as signals that other installations can consume
    - Tokens are automatically refreshed before expiration`,
 
