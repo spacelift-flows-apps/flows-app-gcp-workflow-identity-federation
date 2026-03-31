@@ -128,7 +128,7 @@ export const app = defineApp({
       type: "string",
       required: false,
     },
-    impersonateUser: {
+    impersonatedUserEmail: {
       name: "Impersonate User (Domain-Wide Delegation)",
       description:
         "Email of the Google Workspace user to impersonate via domain-wide delegation (e.g., admin@yourdomain.com). Required for Google Workspace Admin SDK APIs. The service account must have domain-wide delegation enabled in Google Workspace Admin console.",
@@ -414,13 +414,13 @@ async function generateCredentials(config: any, appUrl: string) {
 
     let finalAccessToken = impersonateResult.accessToken;
 
-    // Domain-wide delegation: if impersonateUser is set, sign a JWT with sub claim
+    // Domain-wide delegation: if impersonatedUserEmail is set, sign a JWT with sub claim
     // and exchange it for a delegated access token
-    if (config.impersonateUser) {
+    if (config.impersonatedUserEmail) {
       finalAccessToken = await generateDelegatedToken(
         config.serviceAccountEmail,
         impersonateResult.accessToken,
-        config.impersonateUser,
+        config.impersonatedUserEmail,
         config.scopes || ["https://www.googleapis.com/auth/cloud-platform"],
       );
     }
