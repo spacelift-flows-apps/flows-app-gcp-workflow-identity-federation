@@ -129,7 +129,7 @@ export const app = defineApp({
       required: false,
     },
     impersonatedUserEmail: {
-      name: "Impersonate User (Domain-Wide Delegation)",
+      name: "Impersonated User Email (Domain-Wide Delegation)",
       description:
         "Email of the Google Workspace user to impersonate via domain-wide delegation (e.g., admin@yourdomain.com). Required for Google Workspace Admin SDK APIs. The service account must have domain-wide delegation enabled in Google Workspace Admin console.",
       type: "string",
