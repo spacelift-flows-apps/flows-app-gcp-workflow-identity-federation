@@ -37,6 +37,12 @@ export const app = defineApp({
       name: "Token Expiration",
       description: "Unix timestamp (milliseconds) when token expires",
     },
+    domainWideDelegatedAccessToken: {
+      name: "Domain-Wide Delegated Access Token",
+      description:
+        "Domain-wide delegated access token for API authentication. It has value only if Domain-Wide Delegation is enabled.",
+      sensitive: true,
+    },
   },
 
   installationInstructions: `To set up this GCP Workload Identity Federation app with OIDC:
@@ -104,7 +110,7 @@ export const app = defineApp({
    - Note that **it takes a few moments for GCP permissions to propagate**, so if the status shows "failed" initially, wait a bit and try syncing again
 
 7. **Use the tokens**:
-   - The installation exposes GCP access tokens as signals that other installations can consume
+   - The installation exposes GCP access and optional Domain Wide-Delegated tokens as signals that other installations can consume
    - Tokens are automatically refreshed before expiration`,
 
   config: {
@@ -201,6 +207,8 @@ export const app = defineApp({
         newStatus: "ready",
         signalUpdates: {
           accessToken: newCredentials.accessToken,
+          domainWideDelegatedAccessToken:
+            newCredentials.domainWideDelegatedAccessToken,
           expiresAt: newCredentials.expiresAt,
         },
       };
@@ -412,12 +420,12 @@ async function generateCredentials(config: any, appUrl: string) {
     // Parse expiration time
     const expiresAt = new Date(impersonateResult.expireTime).getTime();
 
-    let finalAccessToken = impersonateResult.accessToken;
+    let domainWideDelegatedAccessToken;
 
     // Domain-wide delegation: if impersonatedUserEmail is set, sign a JWT with sub claim
     // and exchange it for a delegated access token
     if (config.impersonatedUserEmail) {
-      finalAccessToken = await generateDelegatedToken(
+      domainWideDelegatedAccessToken = await generateDelegatedToken(
         config.serviceAccountEmail,
         impersonateResult.accessToken,
         config.impersonatedUserEmail,
@@ -433,7 +441,8 @@ async function generateCredentials(config: any, appUrl: string) {
     ]);
 
     return {
-      accessToken: finalAccessToken,
+      accessToken: impersonateResult.accessToken,
+      domainWideDelegatedAccessToken: domainWideDelegatedAccessToken,
       expiresAt,
     };
   } catch (error) {
