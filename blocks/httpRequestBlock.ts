@@ -3,7 +3,7 @@ import { events, AppBlock, EventInput } from "@slflows/sdk/v1";
 export const httpRequestBlock: AppBlock = {
   name: "HTTP Request",
   description:
-    "Makes an HTTP request using the GCP access token for authorization",
+    "Makes an HTTP request using the GCP access token for authorization. Optionally uses the domain-wide delegated token for Google Workspace APIs.",
   category: "HTTP",
 
   inputs: {
@@ -42,13 +42,30 @@ export const httpRequestBlock: AppBlock = {
           type: "string",
           required: false,
         },
+        useDomainWideDelegation: {
+          name: "Use Domain-Wide Delegated Token",
+          description:
+            "When enabled, uses the domain-wide delegated access token instead of the standard GCP access token. Requires Domain-Wide Delegation to be configured on the app.",
+          type: "boolean",
+          required: false,
+          default: false,
+        },
       },
       async onEvent(input: EventInput): Promise<void> {
-        const accessToken = input.app.signals.accessToken as string | undefined;
+        const useDomainWideDelegation = input.event.inputConfig
+          .useDomainWideDelegation as boolean | undefined;
+
+        const accessToken = useDomainWideDelegation
+          ? (input.app.signals.domainWideDelegatedAccessToken as
+              | string
+              | undefined)
+          : (input.app.signals.accessToken as string | undefined);
 
         if (!accessToken) {
           throw new Error(
-            "No GCP access token available. Ensure the app is fully configured and synced.",
+            useDomainWideDelegation
+              ? "No domain-wide delegated access token available. Ensure Domain-Wide Delegation is configured on the app."
+              : "No GCP access token available. Ensure the app is fully configured and synced.",
           );
         }
 
