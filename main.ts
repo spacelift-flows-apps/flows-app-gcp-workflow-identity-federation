@@ -37,6 +37,12 @@ export const app = defineApp({
       name: "Token Expiration",
       description: "Unix timestamp (milliseconds) when token expires",
     },
+    domainWideDelegatedAccessToken: {
+      name: "Domain-Wide Delegated Access Token",
+      description:
+        "Domain-wide delegated access token for API authentication. It has value only if Domain-Wide Delegation is enabled.",
+      sensitive: true,
+    },
   },
 
   installationInstructions: `To set up this GCP Workload Identity Federation app with OIDC:
@@ -70,15 +76,41 @@ export const app = defineApp({
      - Principal: <copyable>\`principalSet://iam.googleapis.com/projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/POOL_ID/attribute.aud/{appEndpointUrl}\`</copyable>
      - Role: "Workload Identity User" (roles/iam.workloadIdentityUser)
 
-5. **Complete the installation configuration**:
+5. **(Optional) Configure Domain-Wide Delegation**:
+
+   Skip this step if you don't need to impersonate Google Workspace users (e.g., Admin SDK, Calendar, Gmail APIs).
+
+   **5a. Grant Service Account Token Creator role**:
+   - On the service account's IAM page, grant the principal the "Service Account Token Creator" role (roles/iam.serviceAccounts.signJwt)
+   - Note: No basic role (including Owner) includes 'iam.serviceAccounts.signJwt' — this role must be granted explicitly
+
+   **5b. Enable delegation on the service account**:
+   - Go to GCP Console → IAM & Admin → Service Accounts
+   - Select your service account → Edit
+   - Enable "Google Workspace Domain-wide Delegation"
+   - Copy the **numeric Client ID** (not the service account email)
+
+   **5c. Authorize the client in Google Workspace Admin Console**:
+   - Go to [admin.google.com](https://admin.google.com) → Security → Access and data control → API Controls → Domain-wide Delegation → Manage Domain Wide Delegation
+   - Click "Add new" and fill in:
+     - **Client ID**: the numeric Client ID from step 5b
+     - **OAuth Scopes**: comma-separated list of required scopes (no spaces, no brackets)
+
+   **Common pitfalls**:
+   - **Wrong Client ID**: use the numeric Client ID from the domain-wide delegation section, not the SA's unique ID or email
+   - **Scope mismatch**: scopes in the Admin Console must exactly match those requested — even a trailing slash will cause an \`unauthorized_client\` error
+   - **Propagation delay**: Admin Console changes can take 15–60 minutes to propagate
+   - **Impersonated user**: must be an actual Google Workspace user in the domain, not an external account
+
+6. **Complete the installation configuration**:
    - Copy the service account email
    - Copy the full Workload Identity Provider resource name (format: projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/POOL_ID/providers/PROVIDER_ID)
    - Return to this installation and paste both values into the configuration
    - Save the configuration - the installation should now succeed and start providing tokens
    - Note that **it takes a few moments for GCP permissions to propagate**, so if the status shows "failed" initially, wait a bit and try syncing again
 
-6. **Use the tokens**:
-   - The installation exposes GCP access tokens as signals that other installations can consume
+7. **Use the tokens**:
+   - The installation exposes GCP access and optional Domain Wide-Delegated tokens as signals that other installations can consume
    - Tokens are automatically refreshed before expiration`,
 
   config: {
@@ -99,6 +131,13 @@ export const app = defineApp({
       name: "Workload Identity Provider Path",
       description:
         "Full resource path to the Workload Identity Provider (format: projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/POOL_ID/providers/PROVIDER_ID)",
+      type: "string",
+      required: false,
+    },
+    impersonatedUserEmail: {
+      name: "Impersonated User Email (Domain-Wide Delegation)",
+      description:
+        "Email of the Google Workspace user to impersonate via domain-wide delegation (e.g., admin@yourdomain.com). Required for Google Workspace Admin SDK APIs. The service account must have domain-wide delegation enabled in Google Workspace Admin console.",
       type: "string",
       required: false,
     },
@@ -168,6 +207,8 @@ export const app = defineApp({
         newStatus: "ready",
         signalUpdates: {
           accessToken: newCredentials.accessToken,
+          domainWideDelegatedAccessToken:
+            newCredentials.domainWideDelegatedAccessToken,
           expiresAt: newCredentials.expiresAt,
         },
       };
@@ -379,6 +420,19 @@ async function generateCredentials(config: any, appUrl: string) {
     // Parse expiration time
     const expiresAt = new Date(impersonateResult.expireTime).getTime();
 
+    let domainWideDelegatedAccessToken;
+
+    // Domain-wide delegation: if impersonatedUserEmail is set, sign a JWT with sub claim
+    // and exchange it for a delegated access token
+    if (config.impersonatedUserEmail) {
+      domainWideDelegatedAccessToken = await generateDelegatedToken(
+        config.serviceAccountEmail,
+        impersonateResult.accessToken,
+        config.impersonatedUserEmail,
+        config.scopes || ["https://www.googleapis.com/auth/cloud-platform"],
+      );
+    }
+
     // Store credentials and config checksum
     const configChecksum = await generateChecksum(config);
     await kv.app.setMany([
@@ -388,6 +442,7 @@ async function generateCredentials(config: any, appUrl: string) {
 
     return {
       accessToken: impersonateResult.accessToken,
+      domainWideDelegatedAccessToken: domainWideDelegatedAccessToken,
       expiresAt,
     };
   } catch (error) {
@@ -397,6 +452,66 @@ async function generateCredentials(config: any, appUrl: string) {
     );
     throw error;
   }
+}
+
+async function generateDelegatedToken(
+  serviceAccountEmail: string,
+  serviceAccountAccessToken: string,
+  impersonateUser: string,
+  scopes: string[],
+): Promise<string> {
+  // Build a JWT payload for domain-wide delegation with a sub claim
+  const now = Math.floor(Date.now() / 1000);
+  const jwtPayload = {
+    iss: serviceAccountEmail,
+    sub: impersonateUser,
+    scope: scopes.join(" "),
+    aud: "https://oauth2.googleapis.com/token",
+    iat: now,
+    exp: now + 3600,
+  };
+
+  // Use IAM Credentials signJwt API to sign the JWT with the service account key
+  const signJwtResponse = await fetch(
+    `https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${serviceAccountEmail}:signJwt`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${serviceAccountAccessToken}`,
+      },
+      body: JSON.stringify({ payload: JSON.stringify(jwtPayload) }),
+    },
+  );
+
+  if (!signJwtResponse.ok) {
+    const errorText = await signJwtResponse.text();
+    throw new Error(
+      `signJwt failed for domain-wide delegation: ${signJwtResponse.status} ${errorText}`,
+    );
+  }
+
+  const { signedJwt } = await signJwtResponse.json();
+
+  // Exchange the signed JWT for a delegated OAuth2 access token
+  const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+      assertion: signedJwt,
+    }),
+  });
+
+  if (!tokenResponse.ok) {
+    const errorText = await tokenResponse.text();
+    throw new Error(
+      `OAuth2 token exchange for domain-wide delegation failed: ${tokenResponse.status} ${errorText}`,
+    );
+  }
+
+  const tokenResult = await tokenResponse.json();
+  return tokenResult.access_token;
 }
 
 async function createOidcToken(appUrl: string): Promise<string> {
